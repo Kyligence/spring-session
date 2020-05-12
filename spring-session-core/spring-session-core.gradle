@@ -31,3 +31,19 @@ dependencies {
 	testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine"
 	testRuntimeOnly "org.junit.platform:junit-platform-launcher"
 }
+
+
+apply plugin: 'maven'
+
+uploadArchives {
+    repositories {
+        mavenDeployer {
+            repository(url: release_url) {
+                authentication(userName: "admin", password: "Kyligence@2016")
+            }
+            pom.version = version
+            pom.artifactId = artifact_id
+            pom.groupId = group_id
+        }
+    }
+}
