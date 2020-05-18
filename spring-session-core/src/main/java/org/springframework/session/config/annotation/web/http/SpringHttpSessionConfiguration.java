@@ -113,9 +113,22 @@ public class SpringHttpSessionConfiguration implements InitializingBean, Applica
 	@Value("${kylin.web.session-timeout:-1}")
 	private int sessionTimeout;
 
+	public static boolean secureRandomCreateEnabled;
+
 	@Override
 	public void afterPropertiesSet() {
 		this.defaultHttpSessionIdResolver.setCookieSerializer(getCookieSerializer());
+	}
+
+	@Value("${kylin.web.session.secure-random-create-enabled:false}")
+	public void setSecureRandomCreateEnabled(boolean enabled) {
+		secureRandomCreateEnabled = enabled;
+	}
+
+	public static boolean jdbcEncodeEnable;
+	@Value("${kylin.web.session.jdbc-encode-enabled:false}")
+	public void setJdbcEncodeEnable(boolean enabled) {
+		jdbcEncodeEnable = enabled;
 	}
 
 	@Bean

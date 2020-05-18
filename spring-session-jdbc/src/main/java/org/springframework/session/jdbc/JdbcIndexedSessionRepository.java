@@ -22,6 +22,7 @@ import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -64,6 +65,7 @@ import org.springframework.session.SaveMode;
 import org.springframework.session.Session;
 import org.springframework.session.SessionIdGenerator;
 import org.springframework.session.UuidSessionIdGenerator;
+import org.springframework.session.config.annotation.web.http.SpringHttpSessionConfiguration;
 import org.springframework.transaction.support.TransactionOperations;
 import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
@@ -885,6 +887,15 @@ public class JdbcIndexedSessionRepository implements
 			}
 		}
 
+		private String getEncodeSessionId(final String sessionId){
+			if(SpringHttpSessionConfiguration.jdbcEncodeEnable){
+				return new String(Base64.getEncoder().encode(sessionId.getBytes()));
+			}
+			else{
+				return sessionId;
+			}
+		}
+
 		private void save() {
 			if (this.isNew) {
 				JdbcIndexedSessionRepository.this.transactionOperations.executeWithoutResult((status) -> {
@@ -893,7 +904,7 @@ public class JdbcIndexedSessionRepository implements
 					JdbcIndexedSessionRepository.this.jdbcOperations
 						.update(JdbcIndexedSessionRepository.this.createSessionQuery, (ps) -> {
 							ps.setString(1, JdbcSession.this.primaryKey);
-							ps.setString(2, getId());
+							ps.setString(2, getEncodeSessionId(getId()));
 							ps.setLong(3, getCreationTime().toEpochMilli());
 							ps.setLong(4, getLastAccessedTime().toEpochMilli());
 							ps.setInt(5, (int) getMaxInactiveInterval().getSeconds());
@@ -914,7 +925,7 @@ public class JdbcIndexedSessionRepository implements
 							.resolveIndexesFor(JdbcSession.this);
 						JdbcIndexedSessionRepository.this.jdbcOperations
 							.update(JdbcIndexedSessionRepository.this.updateSessionQuery, (ps) -> {
-								ps.setString(1, getId());
+								ps.setString(1, getEncodeSessionId(getId()));
 								ps.setLong(2, getLastAccessedTime().toEpochMilli());
 								ps.setInt(3, (int) getMaxInactiveInterval().getSeconds());
 								ps.setLong(4, getExpiryTime().toEpochMilli());
@@ -970,7 +981,7 @@ public class JdbcIndexedSessionRepository implements
 		public List<JdbcSession> extractData(ResultSet rs) throws SQLException, DataAccessException {
 			List<JdbcSession> sessions = new ArrayList<>();
 			while (rs.next()) {
-				String id = rs.getString("SESSION_ID");
+				String id = getDecodeSessionId(rs.getString("SESSION_ID"));
 				JdbcSession session;
 				if (sessions.size() > 0 && getLast(sessions).getId().equals(id)) {
 					session = getLast(sessions);
@@ -995,6 +1006,15 @@ public class JdbcIndexedSessionRepository implements
 
 		private JdbcSession getLast(List<JdbcSession> sessions) {
 			return sessions.get(sessions.size() - 1);
+		}
+
+		private String getDecodeSessionId(final String sessionId){
+			if(SpringHttpSessionConfiguration.jdbcEncodeEnable){
+				return new String(Base64.getDecoder().decode(sessionId.getBytes()));
+			}
+			else{
+				return sessionId;
+			}
 		}
 
 	}
