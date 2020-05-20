@@ -110,7 +110,7 @@ public class SpringHttpSessionConfiguration implements InitializingBean, Applica
 	@Value("${kylin.web.session-skip-header-name:Auto}")
 	private String skipUpdateSessionHeaderName;
 
-	@Value("${kylin.web.session-timeout:-1}")
+	@Value("${spring.session.timeout:-1}")
 	private int sessionTimeout;
 
 	public static boolean secureRandomCreateEnabled;
