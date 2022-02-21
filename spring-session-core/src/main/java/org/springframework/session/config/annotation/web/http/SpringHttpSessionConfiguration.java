@@ -126,6 +126,7 @@ public class SpringHttpSessionConfiguration implements InitializingBean, Applica
 	}
 
 	public static boolean jdbcEncodeEnable;
+
 	@Value("${kylin.web.session.jdbc-encode-enabled:false}")
 	public void setJdbcEncodeEnable(boolean enabled) {
 		jdbcEncodeEnable = enabled;
