@@ -681,14 +681,14 @@ public class JdbcIndexedSessionRepository implements
 	}
 
 	public void cleanUpExpiredSessions() {
-		Integer deletedCount = this.transactionOperations
-			.execute((status) -> {
-				long currentTimeMillis = System.currentTimeMillis();
-				JdbcIndexedSessionRepository.this.jdbcOperations.update(
-						JdbcIndexedSessionRepository.this.deleteSessionAttributeByExpiryTimeQuery, currentTimeMillis);
-				return JdbcIndexedSessionRepository.this.jdbcOperations
-						.update(JdbcIndexedSessionRepository.this.deleteSessionsByExpiryTimeQuery, System.currentTimeMillis());
-			});
+		Integer deletedCount = this.transactionOperations.execute((status) -> {
+			long currentTimeMillis = System.currentTimeMillis();
+			JdbcIndexedSessionRepository.this.jdbcOperations.update(
+					JdbcIndexedSessionRepository.this.deleteSessionAttributeByExpiryTimeQuery, currentTimeMillis);
+			return JdbcIndexedSessionRepository.this.jdbcOperations
+					.update(JdbcIndexedSessionRepository.this.deleteSessionsByExpiryTimeQuery, System.currentTimeMillis());
+		});
+
 		if (logger.isDebugEnabled()) {
 			logger.debug("Cleaned up " + deletedCount + " expired sessions");
 		}
