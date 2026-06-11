@@ -26,6 +26,7 @@ buildscript {
 
 plugins {
 	id "com.github.ben-manes.versions"
+    id 'maven-publish'
 }
 
 apply plugin: 'io.spring.convention.root'
@@ -66,3 +67,23 @@ springRelease {
     apiDocUrl = "https://docs.spring.io/spring-session/reference/{version}/api/java/index.html"
 	replaceSnapshotVersionInReferenceDocUrl = true
 }
+
+
+configure(subprojects) {project -> {
+	apply plugin: 'maven-publish'
+
+	publishing {
+		repositories {
+			maven {
+				url = release_url
+				name = 'kyligence'
+                if (project.hasProperty('kyligenceRepoUsername')) {
+                    credentials {
+                        username "$kyligenceRepoUsername"
+                        password "$kyligenceRepoPassword"
+                    }
+                }
+			}
+		}
+	}
+}}

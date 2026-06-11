@@ -17,6 +17,7 @@
 package org.springframework.session.web.http;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 
@@ -104,6 +105,18 @@ public class SessionRepositoryFilter<S extends Session> extends OncePerRequestFi
 	private final SessionRepository<S> sessionRepository;
 
 	private HttpSessionIdResolver httpSessionIdResolver = new CookieHttpSessionIdResolver();
+
+	private String skipCommitSessionHeaderName = "Auto";
+
+	public void setSkipCommitSessionHeaderName(String skipCommitSessionHeaderName) {
+		this.skipCommitSessionHeaderName = skipCommitSessionHeaderName;
+	}
+
+	private int sessionTimeout = -1;
+
+	public void setSessionTimeout(int sessionTimeout) {
+		this.sessionTimeout = sessionTimeout;
+	}
 
 	/**
 	 * Creates a new instance.
@@ -223,10 +236,30 @@ public class SessionRepositoryFilter<S extends Session> extends OncePerRequestFi
 				}
 			}
 			else {
+				if (Boolean.valueOf(this.getHeader(SessionRepositoryFilter.this.skipCommitSessionHeaderName))) {
+					return;
+				}
+
 				S session = wrappedSession.getSession();
 				String requestedSessionId = getRequestedSessionId();
 				clearRequestedSessionCache();
-				SessionRepositoryFilter.this.sessionRepository.save(session);
+				try {
+					S sourceSession = SessionRepositoryFilter.this.sessionRepository.findById(session.getId());
+
+					if (null == sourceSession) {
+						SessionRepositoryFilter.this.sessionRepository.save(session);
+					}
+					else {
+						long halfExpireMillis = sourceSession.getLastAccessedTime().toEpochMilli()
+								+ session.getMaxInactiveInterval().toMillis() / 2;
+						if (System.currentTimeMillis() > halfExpireMillis) {
+							SessionRepositoryFilter.this.sessionRepository.save(session);
+						}
+					}
+				}
+				catch (Exception ex) {
+					throw new SaveSessionException("Failed to save session!", ex);
+				}
 				String sessionId = session.getId();
 				if (!isRequestedSessionIdValid() || !sessionId.equals(requestedSessionId)) {
 					SessionRepositoryFilter.this.httpSessionIdResolver.setSessionId(this, this.response, sessionId);
@@ -317,6 +350,12 @@ public class SessionRepositoryFilter<S extends Session> extends OncePerRequestFi
 						new RuntimeException("For debugging purposes only (not an error)"));
 			}
 			S session = SessionRepositoryFilter.this.sessionRepository.createSession();
+			if (SessionRepositoryFilter.this.sessionTimeout > 60) {
+				session.setMaxInactiveInterval(Duration.ofSeconds(SessionRepositoryFilter.this.sessionTimeout));
+			}
+			else if (SessionRepositoryFilter.this.sessionTimeout > 0) {
+				session.setMaxInactiveInterval(Duration.ofSeconds(60));
+			}
 			session.setLastAccessedTime(Instant.now());
 			currentSession = new HttpSessionWrapper(session, getServletContext());
 			setCurrentSession(currentSession);

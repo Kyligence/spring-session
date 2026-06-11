@@ -12,6 +12,7 @@ out
 *.rdb
 .checkstyle
 !etc/eclipse/.checkstyle
+gradle/
 !**/src/**/build
 .DS_Store
 spring-session-docs/package-lock.json

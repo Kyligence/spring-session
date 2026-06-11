@@ -207,6 +207,25 @@ public class JdbcIndexedSessionRepository implements
 			WHERE EXPIRY_TIME < ?
 			""";
 
+	// @formatter:off
+	private static final String DELETE_SESSION_ATTRIBUTE_BY_SESSION_ID_QUERY = ""
+			+ "DELETE FROM %TABLE_NAME%_ATTRIBUTES "
+			+ "WHERE SESSION_PRIMARY_ID in ("
+			+ " SELECT PRIMARY_ID FROM %TABLE_NAME%"
+			+ " WHERE SESSION_ID = ? "
+			+ " AND MAX_INACTIVE_INTERVAL >= 0"
+			+ ")";
+	// @formatter:on
+
+	// @formatter:off
+	private static final String DELETE_SESSION_ATTRIBUTE_BY_EXPIRY_TIME_QUERY = ""
+			+ "DELETE FROM %TABLE_NAME%_ATTRIBUTES "
+			+ "WHERE SESSION_PRIMARY_ID in ("
+			+ " SELECT PRIMARY_ID FROM %TABLE_NAME%"
+			+ " WHERE EXPIRY_TIME < ?"
+			+ ")";
+	// @formatter:on
+
 	private static final Log logger = LogFactory.getLog(JdbcIndexedSessionRepository.class);
 
 	private final JdbcOperations jdbcOperations;
@@ -239,6 +258,10 @@ public class JdbcIndexedSessionRepository implements
 	private String deleteSessionsByExpiryTimeQuery;
 
 	private Duration defaultMaxInactiveInterval = Duration.ofSeconds(MapSession.DEFAULT_MAX_INACTIVE_INTERVAL_SECONDS);
+
+	private String deleteSessionAttributeBySessionIdQuery;
+
+	private String deleteSessionAttributeByExpiryTimeQuery;
 
 	private IndexResolver<Session> indexResolver = new DelegatingIndexResolver<>(new PrincipalNameIndexResolver<>());
 
@@ -383,6 +406,16 @@ public class JdbcIndexedSessionRepository implements
 		this.deleteSessionsByExpiryTimeQuery = getQuery(deleteSessionsByExpiryTimeQuery);
 	}
 
+	public void setDeleteSessionAttributeBySessionIdQuery(String deleteSessionAttributeBySessionIdQuery) {
+		Assert.hasText(deleteSessionAttributeBySessionIdQuery, "Query must not be empty");
+		this.deleteSessionAttributeBySessionIdQuery = getQuery(deleteSessionAttributeBySessionIdQuery);
+	}
+
+	public void setDeleteSessionAttributeByExpiryTimeQuery(String deleteSessionAttributeByExpiryTimeQuery) {
+		Assert.hasText(deleteSessionAttributeByExpiryTimeQuery, "Query must not be empty");
+		this.deleteSessionAttributeByExpiryTimeQuery = getQuery(deleteSessionAttributeByExpiryTimeQuery);
+	}
+
 	/**
 	 * Set the maximum inactive interval in seconds between requests before newly created
 	 * sessions will be invalidated. A negative time indicates that the session will never
@@ -502,8 +535,12 @@ public class JdbcIndexedSessionRepository implements
 
 	@Override
 	public void deleteById(final String id) {
-		this.transactionOperations.executeWithoutResult((status) -> JdbcIndexedSessionRepository.this.jdbcOperations
-			.update(JdbcIndexedSessionRepository.this.deleteSessionQuery, id));
+		this.transactionOperations.executeWithoutResult((status) -> {
+			JdbcIndexedSessionRepository.this.jdbcOperations
+					.update(JdbcIndexedSessionRepository.this.deleteSessionAttributeBySessionIdQuery, id);
+			JdbcIndexedSessionRepository.this.jdbcOperations
+					.update(JdbcIndexedSessionRepository.this.deleteSessionQuery, id);
+		});
 	}
 
 	@Override
@@ -644,9 +681,13 @@ public class JdbcIndexedSessionRepository implements
 	}
 
 	public void cleanUpExpiredSessions() {
-		Integer deletedCount = this.transactionOperations
-			.execute((status) -> JdbcIndexedSessionRepository.this.jdbcOperations
-				.update(JdbcIndexedSessionRepository.this.deleteSessionsByExpiryTimeQuery, System.currentTimeMillis()));
+		Integer deletedCount = this.transactionOperations.execute((status) -> {
+			long currentTimeMillis = System.currentTimeMillis();
+			JdbcIndexedSessionRepository.this.jdbcOperations.update(
+					JdbcIndexedSessionRepository.this.deleteSessionAttributeByExpiryTimeQuery, currentTimeMillis);
+			return JdbcIndexedSessionRepository.this.jdbcOperations
+					.update(JdbcIndexedSessionRepository.this.deleteSessionsByExpiryTimeQuery, System.currentTimeMillis());
+		});
 
 		if (logger.isDebugEnabled()) {
 			logger.debug("Cleaned up " + deletedCount + " expired sessions");
@@ -674,6 +715,9 @@ public class JdbcIndexedSessionRepository implements
 		this.deleteSessionQuery = getQuery(DELETE_SESSION_QUERY);
 		this.listSessionsByPrincipalNameQuery = getQuery(LIST_SESSIONS_BY_PRINCIPAL_NAME_QUERY);
 		this.deleteSessionsByExpiryTimeQuery = getQuery(DELETE_SESSIONS_BY_EXPIRY_TIME_QUERY);
+		this.deleteSessionAttributeBySessionIdQuery = getQuery(DELETE_SESSION_ATTRIBUTE_BY_SESSION_ID_QUERY);
+		this.deleteSessionAttributeByExpiryTimeQuery = getQuery(DELETE_SESSION_ATTRIBUTE_BY_EXPIRY_TIME_QUERY);
+
 	}
 
 	private LobHandler getLobHandler() {
@@ -886,82 +930,87 @@ public class JdbcIndexedSessionRepository implements
 		}
 
 		private void save() {
-			if (this.isNew) {
-				JdbcIndexedSessionRepository.this.transactionOperations.executeWithoutResult((status) -> {
-					Map<String, String> indexes = JdbcIndexedSessionRepository.this.indexResolver
-						.resolveIndexesFor(JdbcSession.this);
-					JdbcIndexedSessionRepository.this.jdbcOperations
-						.update(JdbcIndexedSessionRepository.this.createSessionQuery, (ps) -> {
-							ps.setString(1, JdbcSession.this.primaryKey);
-							ps.setString(2, getId());
-							ps.setLong(3, getCreationTime().toEpochMilli());
-							ps.setLong(4, getLastAccessedTime().toEpochMilli());
-							ps.setInt(5, (int) getMaxInactiveInterval().getSeconds());
-							ps.setLong(6, getExpiryTime().toEpochMilli());
-							ps.setString(7, indexes.get(PRINCIPAL_NAME_INDEX_NAME));
-						});
-					Set<String> attributeNames = getAttributeNames();
-					if (!attributeNames.isEmpty()) {
-						insertSessionAttributes(JdbcSession.this, new ArrayList<>(attributeNames));
-					}
-				});
-			}
-			else {
-				List<Runnable> deltaActions = JdbcSession.this.changed ? new ArrayList<>(4) : new ArrayList<>();
-				if (JdbcSession.this.changed) {
-					deltaActions.add(() -> {
-						Map<String, String> indexes = JdbcIndexedSessionRepository.this.indexResolver
-							.resolveIndexesFor(JdbcSession.this);
-						JdbcIndexedSessionRepository.this.jdbcOperations
-							.update(JdbcIndexedSessionRepository.this.updateSessionQuery, (ps) -> {
-								ps.setString(1, getId());
-								ps.setLong(2, getLastAccessedTime().toEpochMilli());
-								ps.setInt(3, (int) getMaxInactiveInterval().getSeconds());
-								ps.setLong(4, getExpiryTime().toEpochMilli());
-								ps.setString(5, indexes.get(PRINCIPAL_NAME_INDEX_NAME));
-								ps.setString(6, JdbcSession.this.primaryKey);
-							});
-					});
-				}
-
-				List<String> addedAttributeNames = JdbcSession.this.delta.entrySet()
-					.stream()
-					.filter((entry) -> entry.getValue() == DeltaValue.ADDED)
-					.map(Map.Entry::getKey)
-					.collect(Collectors.toList());
-				if (!addedAttributeNames.isEmpty()) {
-					deltaActions.add(() -> insertSessionAttributes(JdbcSession.this, addedAttributeNames));
-				}
-
-				List<String> updatedAttributeNames = JdbcSession.this.delta.entrySet()
-					.stream()
-					.filter((entry) -> entry.getValue() == DeltaValue.UPDATED)
-					.map(Map.Entry::getKey)
-					.collect(Collectors.toList());
-				if (!updatedAttributeNames.isEmpty()) {
-					deltaActions.add(() -> updateSessionAttributes(JdbcSession.this, updatedAttributeNames));
-				}
-
-				List<String> removedAttributeNames = JdbcSession.this.delta.entrySet()
-					.stream()
-					.filter((entry) -> entry.getValue() == DeltaValue.REMOVED)
-					.map(Map.Entry::getKey)
-					.collect(Collectors.toList());
-				if (!removedAttributeNames.isEmpty()) {
-					deltaActions.add(() -> deleteSessionAttributes(JdbcSession.this, removedAttributeNames));
-				}
-
-				if (!deltaActions.isEmpty()) {
+			try {
+				if (this.isNew) {
 					JdbcIndexedSessionRepository.this.transactionOperations.executeWithoutResult((status) -> {
-						for (Runnable action : deltaActions) {
-							action.run();
+						Map<String, String> indexes = JdbcIndexedSessionRepository.this.indexResolver
+								.resolveIndexesFor(JdbcSession.this);
+						JdbcIndexedSessionRepository.this.jdbcOperations
+								.update(JdbcIndexedSessionRepository.this.createSessionQuery, (ps) -> {
+									ps.setString(1, JdbcSession.this.primaryKey);
+									ps.setString(2, getId());
+									ps.setLong(3, getCreationTime().toEpochMilli());
+									ps.setLong(4, getLastAccessedTime().toEpochMilli());
+									ps.setInt(5, (int) getMaxInactiveInterval().getSeconds());
+									ps.setLong(6, getExpiryTime().toEpochMilli());
+									ps.setString(7, indexes.get(PRINCIPAL_NAME_INDEX_NAME));
+								});
+						Set<String> attributeNames = getAttributeNames();
+						if (!attributeNames.isEmpty()) {
+							insertSessionAttributes(JdbcSession.this, new ArrayList<>(attributeNames));
 						}
 					});
 				}
-			}
-			clearChangeFlags();
-		}
+				else {
+					List<Runnable> deltaActions = JdbcSession.this.changed ? new ArrayList<>(4) : new ArrayList<>();
+					if (JdbcSession.this.changed) {
+						deltaActions.add(() -> {
+							Map<String, String> indexes = JdbcIndexedSessionRepository.this.indexResolver
+									.resolveIndexesFor(JdbcSession.this);
+							JdbcIndexedSessionRepository.this.jdbcOperations
+									.update(JdbcIndexedSessionRepository.this.updateSessionQuery, (ps) -> {
+										ps.setString(1, getId());
+										ps.setLong(2, getLastAccessedTime().toEpochMilli());
+										ps.setInt(3, (int) getMaxInactiveInterval().getSeconds());
+										ps.setLong(4, getExpiryTime().toEpochMilli());
+										ps.setString(5, indexes.get(PRINCIPAL_NAME_INDEX_NAME));
+										ps.setString(6, JdbcSession.this.primaryKey);
+									});
+						});
+					}
 
+					List<String> addedAttributeNames = JdbcSession.this.delta.entrySet()
+							.stream()
+							.filter((entry) -> entry.getValue() == DeltaValue.ADDED)
+							.map(Map.Entry::getKey)
+							.collect(Collectors.toList());
+					if (!addedAttributeNames.isEmpty()) {
+						deltaActions.add(() -> insertSessionAttributes(JdbcSession.this, addedAttributeNames));
+					}
+
+					List<String> updatedAttributeNames = JdbcSession.this.delta.entrySet()
+							.stream()
+							.filter((entry) -> entry.getValue() == DeltaValue.UPDATED)
+							.map(Map.Entry::getKey)
+							.collect(Collectors.toList());
+					if (!updatedAttributeNames.isEmpty()) {
+						deltaActions.add(() -> updateSessionAttributes(JdbcSession.this, updatedAttributeNames));
+					}
+
+					List<String> removedAttributeNames = JdbcSession.this.delta.entrySet()
+							.stream()
+							.filter((entry) -> entry.getValue() == DeltaValue.REMOVED)
+							.map(Map.Entry::getKey)
+							.collect(Collectors.toList());
+					if (!removedAttributeNames.isEmpty()) {
+						deltaActions.add(() -> deleteSessionAttributes(JdbcSession.this, removedAttributeNames));
+					}
+
+					if (!deltaActions.isEmpty()) {
+						JdbcIndexedSessionRepository.this.transactionOperations.executeWithoutResult((status) -> {
+							for (Runnable action : deltaActions) {
+								action.run();
+							}
+						});
+					}
+				}
+				clearChangeFlags();
+			}
+			catch (DataIntegrityViolationException e) {
+				logger.error(e);
+				throw new DataIntegrityViolationException("The data exceeds the limit of length for column ?session_id?. Please adjust its maximum value and try again.");
+			}
+		}
 	}
 
 	private class SessionResultSetExtractor implements ResultSetExtractor<List<JdbcSession>> {
